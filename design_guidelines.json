@@ -1,0 +1,207 @@
+{
+  "design_system": {
+    "identity": {
+      "name": "Second Chance Market",
+      "values": ["Sustainable", "Local", "Trustworthy", "Organic", "Artisanal"],
+      "tone": "Warm, inviting, neighborly, not corporate",
+      "visual_metaphor": "A curated local flea market on a sunny Sunday morning"
+    },
+    "typography": {
+      "font_family": {
+        "headings": "Nunito",
+        "body": "Lato",
+        "monospace": "Space Mono"
+      },
+      "weights": {
+        "regular": "400",
+        "medium": "500",
+        "bold": "700"
+      },
+      "sizes": {
+        "xs": 12,
+        "sm": 14,
+        "base": 16,
+        "lg": 18,
+        "xl": 20,
+        "2xl": 24,
+        "3xl": 30,
+        "4xl": 36
+      },
+      "instructions": "Use expo-font to load Nunito (or similar rounded sans) for headings and Lato for body. Fallback to system fonts if needed but prioritize rounded aesthetic."
+    },
+    "colors": {
+      "background": {
+        "primary": "#FFFFF0",
+        "secondary": "#FAF8F1",
+        "tertiary": "#F0EFE9",
+        "modal": "rgba(255, 255, 240, 0.95)"
+      },
+      "brand": {
+        "primary": "#8DA399",
+        "primary_light": "#AEC0B6",
+        "primary_dark": "#6B8278",
+        "secondary": "#E07A5F",
+        "secondary_light": "#F2A691",
+        "accent": "#D4A373"
+      },
+      "text": {
+        "primary": "#2D3436",
+        "secondary": "#636E72",
+        "muted": "#B2BEC3",
+        "inverse": "#FFFFF0"
+      },
+      "status": {
+        "success": "#5E8C83",
+        "error": "#D9534F",
+        "warning": "#F0B429",
+        "info": "#7F9CF5"
+      },
+      "border": {
+        "light": "rgba(141, 163, 153, 0.2)",
+        "medium": "rgba(141, 163, 153, 0.4)"
+      }
+    },
+    "layout": {
+      "spacing": {
+        "xs": 4,
+        "sm": 8,
+        "md": 16,
+        "lg": 24,
+        "xl": 32,
+        "2xl": 48
+      },
+      "borderRadius": {
+        "sm": 8,
+        "md": 16,
+        "lg": 24,
+        "full": 9999
+      },
+      "shadows": {
+        "soft": {
+          "shadowColor": "#2D3436",
+          "shadowOffset": { "width": 0, "height": 4 },
+          "shadowOpacity": 0.08,
+          "shadowRadius": 12,
+          "elevation": 3
+        },
+        "floating": {
+          "shadowColor": "#2D3436",
+          "shadowOffset": { "width": 0, "height": 8 },
+          "shadowOpacity": 0.12,
+          "shadowRadius": 24,
+          "elevation": 8
+        }
+      }
+    },
+    "components": {
+      "buttons": {
+        "primary": {
+          "backgroundColor": "#8DA399",
+          "borderRadius": 9999,
+          "paddingVertical": 16,
+          "paddingHorizontal": 24,
+          "alignItems": "center",
+          "justifyContent": "center"
+        },
+        "secondary": {
+          "backgroundColor": "transparent",
+          "borderWidth": 1,
+          "borderColor": "#8DA399",
+          "borderRadius": 9999,
+          "paddingVertical": 16,
+          "paddingHorizontal": 24
+        },
+        "text_style": {
+          "color": "#FFFFF0",
+          "fontFamily": "Nunito",
+          "fontWeight": "700",
+          "fontSize": 16
+        }
+      },
+      "cards": {
+        "container": {
+          "backgroundColor": "#FFFFF0",
+          "borderRadius": 16,
+          "padding": 16,
+          "marginBottom": 16,
+          "borderWidth": 1,
+          "borderColor": "rgba(141, 163, 153, 0.15)"
+        }
+      },
+      "inputs": {
+        "container": {
+          "backgroundColor": "#FAF8F1",
+          "borderRadius": 12,
+          "borderWidth": 1,
+          "borderColor": "rgba(141, 163, 153, 0.3)",
+          "paddingHorizontal": 16,
+          "paddingVertical": 12,
+          "marginBottom": 16
+        },
+        "text": {
+          "fontFamily": "Lato",
+          "fontSize": 16,
+          "color": "#2D3436"
+        }
+      },
+      "watermark": {
+        "instruction": "Place on every screen (using a global wrapper or absolute positioning).",
+        "style": {
+          "position": "absolute",
+          "top": "50%",
+          "left": "50%",
+          "transform": [{"translateX": -100}, {"translateY": -100}],
+          "opacity": 0.06,
+          "width": 200,
+          "height": 200,
+          "zIndex": -1,
+          "justifyContent": "center",
+          "alignItems": "center"
+        },
+        "icon_name": "Sprout",
+        "icon_size": 180,
+        "icon_color": "#8DA399"
+      }
+    },
+    "icons": {
+      "library": "lucide-react-native",
+      "style": "outline",
+      "strokeWidth": 1.5,
+      "color": "#2D3436",
+      "activeColor": "#8DA399"
+    },
+    "images": {
+      "categories": [
+        { "name": "Electronics", "url": "https://images.unsplash.com/photo-1727793574518-7a7969cadee3?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzR8MHwxfHNlYXJjaHwzfHxzZWNvbmQlMjBoYW5kJTIwdmludGFnZSUyMGl0ZW1zJTIwZWxlY3Ryb25pY3MlMjBjbG90aGluZyUyMGZ1cm5pdHVyZSUyMGJvb2tzJTIwc3BvcnRzfGVufDB8fHx8MTc3Mjg4ODQwNnww&ixlib=rb-4.1.0&q=85" },
+        { "name": "Clothing", "url": "https://images.unsplash.com/photo-1681118985036-e2ca143b9c6d?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1Nzh8MHwxfHNlYXJjaHwyfHx2aW50YWdlJTIwY2xvdGhpbmclMjBhbnRpcXVlJTIwZnVybml0dXJlJTIwdXNlZCUyMGJvb2tzJTIwcmV0cm8lMjBlbGVjdHJvbmljcyUyMHNwb3J0cyUyMGdlYXJ8ZW58MHx8fHwxNzcyODg4NDI1fDA&ixlib=rb-4.1.0&q=85" },
+        { "name": "Home & Furniture", "url": "https://images.unsplash.com/photo-1706098037576-bf642d110db7?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NDk1Nzh8MHwxfHNlYXJjaHwzfHx2aW50YWdlJTIwY2xvdGhpbmclMjBhbnRpcXVlJTIwZnVybml0dXJlJTIwdXNlZCUyMGJvb2tzJTIwcmV0cm8lMjBlbGVjdHJvbmljcyUyMHNwb3J0cyUyMGdlYXJ8ZW58MHx8fHwxNzcyODg4NDI1fDA&ixlib=rb-4.1.0&q=85" },
+        { "name": "Sports & Leisure", "url": "https://images.unsplash.com/photo-1626019635985-31bd6c1b8e79?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzR8MHwxfHNlYXJjaHwxfHxzZWNvbmQlMjBoYW5kJTIwdmludGFnZSUyMGl0ZW1zJTIwZWxlY3Ryb25pY3MlMjBjbG90aGluZyUyMGZ1cm5pdHVyZSUyMGJvb2tzJTIwc3BvcnRzfGVufDB8fHx8MTc3Mjg4ODQwNnww&ixlib=rb-4.1.0&q=85" },
+        { "name": "Books & Media", "url": "https://images.unsplash.com/photo-1688126674706-bf7e1c027203?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzR8MHwxfHNlYXJjaHwyfHxzZWNvbmQlMjBoYW5kJTIwdmludGFnZSUyMGl0ZW1zJTIwZWxlY3Ryb25pY3MlMjBjbG90aGluZyUyMGZ1cm5pdHVyZSUyMGJvb2tzJTIwc3BvcnRzfGVufDB8fHx8MTc3Mjg4ODQwNnww&ixlib=rb-4.1.0&q=85" },
+        { "name": "Other", "url": "https://images.unsplash.com/photo-1622551557221-e220008ebfe8?crop=entropy&cs=srgb&fm=jpg&ixid=M3w3NTY2NzR8MHwxfHNlYXJjaHw0fHxzZWNvbmQlMjBoYW5kJTIwdmludGFnZSUyMGl0ZW1zJTIwZWxlY3Ryb25pY3MlMjBjbG90aGluZyUyMGZ1cm5pdHVyZSUyMGJvb2tzJTIwc3BvcnRzfGVufDB8fHx8MTc3Mjg4ODQwNnww&ixlib=rb-4.1.0&q=85" }
+      ],
+      "watermark_placeholder": "Use a large 'Sprout' or 'Leaf' icon from Lucide-React-Native instead of a bitmap image for better scaling and performance."
+    }
+  },
+  "instructions_to_main_agent": {
+    "framework": "React Native (Expo)",
+    "language": "JavaScript (or TypeScript if configured)",
+    "styling": "StyleSheet.create() only. NO CSS/Tailwind classes.",
+    "icons": "Use 'lucide-react-native'. Import components like { Home, Search, PlusCircle, MessageCircle, User, Sprout }.",
+    "navigation": "Use Expo Router. File based routing in '/app/frontend/app'.",
+    "critical_rules": [
+      "Every screen MUST have the 'Watermark' component in the background (zIndex: -1, opacity: 0.06).",
+      "Use 'SafeAreaView' from 'react-native-safe-area-context' for all screens.",
+      "All interactive elements (TouchableOpacity, Pressable, TextInput) MUST have a 'testID' (or 'accessibilityLabel' if better for testing) prop.",
+      "Do not use gradients. Use solid colors or subtle borders.",
+      "Commission logic: 5% fee calculated on frontend before payment (visual only) and handled in backend.",
+      "Chat is ONLY active after payment. Disable/Hide chat button on listing until purchased."
+    ],
+    "universal_guidelines": [
+      "Avoid default system blue. Use Brand Sage Green (#8DA399) for links and primary actions.",
+      "Use 'Alert' from react-native for confirmations, but custom modals for complex interactions.",
+      "Ensure touch targets are at least 44x44 points.",
+      "KeyboardAvoidView must be used on forms."
+    ]
+  },
+  "watermark_component_code": "import React from 'react';\nimport { View, StyleSheet, Dimensions } from 'react-native';\nimport { Sprout } from 'lucide-react-native';\n\nconst { width } = Dimensions.get('window');\n\nexport const Watermark = () => (\n  <View style={styles.container} pointerEvents=\"none\">\n    <Sprout size={width * 0.6} color=\"#8DA399\" strokeWidth={1} style={{ opacity: 0.06 }} />\n  </View>\n);\n\nconst styles = StyleSheet.create({\n  container: {\n    ...StyleSheet.absoluteFillObject,\n    justifyContent: 'center',\n    alignItems: 'center',\n    zIndex: -1,\n    backgroundColor: 'transparent',\n  },\n});"
+}

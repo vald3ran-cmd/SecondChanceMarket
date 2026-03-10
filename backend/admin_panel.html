@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Second Chance Market - Admin Panel</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Pacifico&family=Nunito+Sans:wght@400;600;700;800&display=swap');
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Nunito Sans', sans-serif; background: #FFFFF0; color: #2D3436; min-height: 100vh; }
+  .login-container { display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 24px; }
+  .login-card { background: rgba(255,255,240,0.95); border: 1px solid rgba(141,163,153,0.2); border-radius: 16px; padding: 40px; max-width: 400px; width: 100%; box-shadow: 0 4px 12px rgba(45,52,54,0.08); }
+  .login-card h1 { font-family: 'Pacifico', cursive; color: #8DA399; font-size: 28px; text-align: center; margin-bottom: 8px; }
+  .login-card p { color: #636E72; text-align: center; margin-bottom: 24px; font-size: 14px; }
+  .form-group { margin-bottom: 16px; }
+  .form-group label { display: block; font-size: 12px; font-weight: 600; color: #636E72; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 6px; }
+  .form-group input { width: 100%; padding: 12px 16px; border: 1px solid rgba(141,163,153,0.3); border-radius: 12px; font-size: 15px; background: rgba(255,255,240,0.85); font-family: 'Nunito Sans', sans-serif; color: #2D3436; }
+  .form-group input:focus { outline: none; border-color: #8DA399; }
+  .btn-primary { width: 100%; padding: 14px; background: #8DA399; color: #FFFFF0; border: none; border-radius: 999px; font-size: 16px; font-weight: 700; cursor: pointer; font-family: 'Nunito Sans', sans-serif; }
+  .btn-primary:hover { background: #6B8278; }
+  .btn-danger { padding: 8px 16px; background: #D9534F; color: white; border: none; border-radius: 999px; font-size: 12px; font-weight: 600; cursor: pointer; font-family: 'Nunito Sans', sans-serif; }
+  .btn-danger:hover { background: #c0392b; }
+  .error-msg { color: #D9534F; text-align: center; margin-top: 12px; font-size: 14px; }
+
+  /* Dashboard */
+  .dashboard { display: none; }
+  .dashboard.active { display: block; }
+  .login-container.hidden { display: none; }
+  .topbar { background: rgba(255,255,240,0.95); border-bottom: 1px solid rgba(141,163,153,0.2); padding: 16px 32px; display: flex; justify-content: space-between; align-items: center; }
+  .topbar h2 { font-family: 'Pacifico', cursive; color: #8DA399; font-size: 22px; }
+  .topbar .admin-info { display: flex; align-items: center; gap: 12px; }
+  .topbar .admin-badge { background: #8DA399; color: white; padding: 4px 12px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+  .btn-logout { padding: 8px 16px; background: transparent; color: #D9534F; border: 1px solid rgba(217,83,79,0.3); border-radius: 999px; font-size: 13px; font-weight: 600; cursor: pointer; font-family: 'Nunito Sans', sans-serif; }
+
+  .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; padding: 24px 32px; }
+  .stat-card { background: rgba(255,255,240,0.9); border: 1px solid rgba(141,163,153,0.2); border-radius: 16px; padding: 20px; text-align: center; }
+  .stat-number { font-size: 36px; font-weight: 800; color: #2D3436; }
+  .stat-label { font-size: 13px; color: #636E72; margin-top: 4px; }
+  .stat-card.green .stat-number { color: #8DA399; }
+  .stat-card.orange .stat-number { color: #E07A5F; }
+  .stat-card.blue .stat-number { color: #7F9CF5; }
+
+  .section { padding: 0 32px 32px; }
+  .section h3 { font-size: 18px; font-weight: 800; color: #2D3436; margin-bottom: 16px; }
+  .users-table { width: 100%; border-collapse: separate; border-spacing: 0; background: rgba(255,255,240,0.9); border-radius: 16px; overflow: hidden; border: 1px solid rgba(141,163,153,0.2); }
+  .users-table th { background: #8DA399; color: #FFFFF0; padding: 14px 16px; text-align: left; font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px; }
+  .users-table td { padding: 12px 16px; border-bottom: 1px solid rgba(141,163,153,0.1); font-size: 14px; }
+  .users-table tr:last-child td { border-bottom: none; }
+  .users-table tr:hover td { background: rgba(141,163,153,0.05); }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+  .badge-admin { background: #8DA399; color: white; }
+  .badge-user { background: rgba(141,163,153,0.15); color: #636E72; }
+  .badge-privacy { background: rgba(94,140,131,0.15); color: #5E8C83; }
+  .user-avatar { width: 36px; height: 36px; border-radius: 50%; background: rgba(141,163,153,0.2); display: flex; align-items: center; justify-content: center; font-weight: 700; color: #8DA399; font-size: 14px; }
+  .user-cell { display: flex; align-items: center; gap: 10px; }
+  .loading { text-align: center; padding: 40px; color: #636E72; }
+  @media (max-width: 768px) {
+    .topbar { padding: 12px 16px; }
+    .stats-grid { padding: 16px; }
+    .section { padding: 0 16px 16px; }
+    .users-table { font-size: 12px; }
+    .users-table th, .users-table td { padding: 8px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- Login -->
+<div class="login-container" id="loginContainer">
+  <div class="login-card">
+    <h1>Admin Panel</h1>
+    <p>Second Chance Market</p>
+    <div class="form-group">
+      <label>Email</label>
+      <input type="email" id="loginEmail" placeholder="admin@scm.it">
+    </div>
+    <div class="form-group">
+      <label>Password</label>
+      <input type="password" id="loginPassword" placeholder="Password admin">
+    </div>
+    <button class="btn-primary" onclick="doLogin()">Accedi</button>
+    <div class="error-msg" id="loginError"></div>
+  </div>
+</div>
+
+<!-- Dashboard -->
+<div class="dashboard" id="dashboard">
+  <div class="topbar">
+    <h2>Second Chance Market</h2>
+    <div class="admin-info">
+      <span class="admin-badge">ADMIN</span>
+      <span id="adminName"></span>
+      <button class="btn-logout" onclick="doLogout()">Esci</button>
+    </div>
+  </div>
+
+  <div class="stats-grid" id="statsGrid">
+    <div class="stat-card green"><div class="stat-number" id="statUsers">-</div><div class="stat-label">Utenti Registrati</div></div>
+    <div class="stat-card orange"><div class="stat-number" id="statListings">-</div><div class="stat-label">Annunci Attivi</div></div>
+    <div class="stat-card blue"><div class="stat-number" id="statTransactions">-</div><div class="stat-label">Transazioni</div></div>
+    <div class="stat-card"><div class="stat-number" id="statRevenue">-</div><div class="stat-label">Revenue Commissioni (€)</div></div>
+  </div>
+
+  <div class="section">
+    <h3>Utenti Registrati</h3>
+    <div id="usersTableContainer"><div class="loading">Caricamento...</div></div>
+  </div>
+</div>
+
+<script>
+const API_BASE = window.location.origin + '/api';
+let token = localStorage.getItem('admin_token');
+
+async function apiCall(path, options = {}) {
+  const headers = { 'Content-Type': 'application/json', ...options.headers };
+  if (token) headers['Authorization'] = 'Bearer ' + token;
+  const res = await fetch(API_BASE + path, { ...options, headers });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: 'Errore' }));
+    throw new Error(err.detail || 'Errore ' + res.status);
+  }
+  return res.json();
+}
+
+async function doLogin() {
+  const email = document.getElementById('loginEmail').value;
+  const password = document.getElementById('loginPassword').value;
+  const errorEl = document.getElementById('loginError');
+  errorEl.textContent = '';
+  try {
+    const res = await apiCall('/auth/login', {
+      method: 'POST', body: JSON.stringify({ email, password })
+    });
+    token = res.token;
+    localStorage.setItem('admin_token', token);
+    // Verify admin role
+    const me = await apiCall('/auth/me');
+    if (me.role !== 'admin') {
+      token = null;
+      localStorage.removeItem('admin_token');
+      errorEl.textContent = 'Accesso riservato agli amministratori';
+      return;
+    }
+    document.getElementById('adminName').textContent = me.name;
+    showDashboard();
+  } catch (e) {
+    errorEl.textContent = e.message;
+  }
+}
+
+function doLogout() {
+  token = null;
+  localStorage.removeItem('admin_token');
+  document.getElementById('loginContainer').classList.remove('hidden');
+  document.getElementById('dashboard').classList.remove('active');
+}
+
+async function showDashboard() {
+  document.getElementById('loginContainer').classList.add('hidden');
+  document.getElementById('dashboard').classList.add('active');
+  await loadDashboardData();
+}
+
+async function loadDashboardData() {
+  try {
+    const users = await apiCall('/admin/users');
+    const regularUsers = users.filter(u => u.role !== 'admin');
+    
+    // Stats
+    document.getElementById('statUsers').textContent = regularUsers.length;
+    const totalListings = regularUsers.reduce((sum, u) => sum + (u.listings_count || 0), 0);
+    document.getElementById('statListings').textContent = totalListings;
+    const totalPurchases = regularUsers.reduce((sum, u) => sum + (u.purchases_count || 0), 0);
+    document.getElementById('statTransactions').textContent = totalPurchases;
+    
+    // Try to load transactions for revenue
+    try {
+      const txs = await apiCall('/transactions');
+      const revenue = txs.reduce((sum, t) => sum + (t.commission || 0), 0);
+      document.getElementById('statRevenue').textContent = revenue.toFixed(2);
+    } catch { document.getElementById('statRevenue').textContent = '0.00'; }
+
+    // Users table
+    let html = '<table class="users-table"><thead><tr>';
+    html += '<th>Utente</th><th>Email</th><th>Zona</th><th>Ruolo</th><th>Annunci</th><th>Acquisti</th><th>Privacy</th><th>Registrazione</th><th>Azioni</th>';
+    html += '</tr></thead><tbody>';
+    
+    for (const u of users) {
+      const initial = u.name ? u.name.charAt(0).toUpperCase() : '?';
+      const date = u.created_at ? new Date(u.created_at).toLocaleDateString('it-IT') : 'N/D';
+      const roleBadge = u.role === 'admin' ? '<span class="badge badge-admin">Admin</span>' : '<span class="badge badge-user">Utente</span>';
+      const privacyBadge = u.accepted_privacy_at ? '<span class="badge badge-privacy">Accettata</span>' : '<span class="badge badge-user">N/D</span>';
+      const deleteBtn = u.role !== 'admin' ? '<button class="btn-danger" onclick="deleteUser(\'' + u.id + '\', \'' + u.name.replace(/'/g, "\\'") + '\')">Elimina</button>' : '';
+      
+      html += '<tr>';
+      html += '<td><div class="user-cell"><div class="user-avatar">' + initial + '</div>' + (u.name || 'N/D') + '</div></td>';
+      html += '<td>' + (u.email || 'N/D') + '</td>';
+      html += '<td>' + (u.neighborhood || 'N/D') + '</td>';
+      html += '<td>' + roleBadge + '</td>';
+      html += '<td>' + (u.listings_count || 0) + '</td>';
+      html += '<td>' + (u.purchases_count || 0) + '</td>';
+      html += '<td>' + privacyBadge + '</td>';
+      html += '<td>' + date + '</td>';
+      html += '<td>' + deleteBtn + '</td>';
+      html += '</tr>';
+    }
+    html += '</tbody></table>';
+    document.getElementById('usersTableContainer').innerHTML = html;
+  } catch (e) {
+    document.getElementById('usersTableContainer').innerHTML = '<div class="loading" style="color:#D9534F">' + e.message + '</div>';
+  }
+}
+
+async function deleteUser(userId, userName) {
+  if (!confirm('Sei sicuro di voler eliminare ' + userName + '?\n\nI suoi annunci verranno rimossi.')) return;
+  try {
+    await apiCall('/admin/users/' + userId, { method: 'DELETE' });
+    alert('Utente ' + userName + ' eliminato con successo');
+    await loadDashboardData();
+  } catch (e) {
+    alert('Errore: ' + e.message);
+  }
+}
+
+// Auto-login if token exists
+(async function() {
+  if (token) {
+    try {
+      const me = await apiCall('/auth/me');
+      if (me.role === 'admin') {
+        document.getElementById('adminName').textContent = me.name;
+        showDashboard();
+        return;
+      }
+    } catch {}
+    localStorage.removeItem('admin_token');
+    token = null;
+  }
+})();
+</script>
+</body>
+</html>
