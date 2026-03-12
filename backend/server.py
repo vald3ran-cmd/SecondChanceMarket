@@ -16,6 +16,8 @@ from jose import jwt, JWTError
 from passlib.context import CryptContext
 import math
 import resend
+import stripe
+import json
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -29,10 +31,12 @@ JWT_ALGORITHM = "HS256"
 JWT_EXPIRE_HOURS = 72
 
 STRIPE_API_KEY = os.environ.get('STRIPE_API_KEY')
+STRIPE_WEBHOOK_SECRET = os.environ.get('STRIPE_WEBHOOK_SECRET')
 RESEND_API_KEY = os.environ.get('RESEND_API_KEY')
 
-# Setup Resend
+# Setup external services
 resend.api_key = RESEND_API_KEY
+stripe.api_key = STRIPE_API_KEY
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 security = HTTPBearer()
@@ -42,11 +46,6 @@ api_router = APIRouter(prefix="/api")
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
-
-# --- Stripe Setup ---
-from emergentintegrations.payments.stripe.checkout import (
-    StripeCheckout, CheckoutSessionResponse, CheckoutStatusResponse, CheckoutSessionRequest
-)
 
 # --- Constants ---
 CATEGORIES = ["Elettronica", "Abbigliamento", "Casa & Arredamento", "Sport & Tempo Libero", "Libri & Media", "Altro"]
@@ -258,34 +257,33 @@ class PasswordResetConfirm(BaseModel):
     new_password: str
 
 class ReportCreate(BaseModel):
-    reported_type: str  # "user" or "listing"
+    reported_type: str
     reported_id: str
     reason: str
     description: str = ""
 
 class RatingCreate(BaseModel):
     transaction_id: str
-    rating: int  # 1-5
+    rating: int
     comment: str = ""
 
 class AvatarUpdate(BaseModel):
-    avatar: str  # Base64 encoded image
+    avatar: str
 
 class ValuationRequest(BaseModel):
-    images: List[str]  # Base64 encoded images
+    images: List[str]
     category: str
-    dating: str  # es: "anni 60", "2010", "sconosciuto"
-    condition: str  # es: "nuovo", "buone condizioni", "da restaurare"
+    dating: str
+    condition: str
     description: str
     brand: str = ""
-    origin_url: str  # Per redirect dopo pagamento Stripe
+    origin_url: str
 
 class ValuationMessage(BaseModel):
     text: str
 
 # --- Email Service ---
 def send_email(to: str, subject: str, html: str):
-    """Send email using Resend"""
     try:
         params = {
             "from": "Second Chance Market <noreply@secondchancemarket.store>",
@@ -301,7 +299,6 @@ def send_email(to: str, subject: str, html: str):
         return None
 
 def send_verification_email(to: str, name: str, token: str):
-    """Send email verification link"""
     verification_url = f"https://secondchancemarket.store/verify?token={token}"
     html = f"""
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -323,7 +320,6 @@ def send_verification_email(to: str, name: str, token: str):
     return send_email(to, "Verifica il tuo indirizzo email - Second Chance Market", html)
 
 def send_password_reset_email(to: str, name: str, token: str):
-    """Send password reset link"""
     reset_url = f"https://secondchancemarket.store/reset-password?token={token}"
     html = f"""
     <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -345,7 +341,6 @@ def send_password_reset_email(to: str, name: str, token: str):
     return send_email(to, "Recupero Password - Second Chance Market", html)
 
 def send_transaction_complete_email(to: str, buyer_name: str, seller_name: str, listing_title: str, is_buyer: bool):
-    """Send transaction complete notification"""
     role = "acquistato" if is_buyer else "venduto"
     other_party = seller_name if is_buyer else buyer_name
     html = f"""
@@ -400,7 +395,7 @@ def find_province_coords(regione: str, provincia: str):
             for prov in area["province"]:
                 if prov["nome"] == provincia:
                     return prov["lat"], prov["lng"]
-    return 41.9028, 12.4964  # Default Roma
+    return 41.9028, 12.4964
 
 # --- Macro Areas Route ---
 @api_router.get("/macro-areas")
@@ -415,13 +410,12 @@ async def register(data: UserRegister):
     existing = await db.users.find_one({"email": data.email.lower()})
     if existing:
         raise HTTPException(status_code=400, detail="Email già registrata")
-    
+
     lat, lng = find_province_coords(data.regione, data.provincia)
     neighborhood = f"{data.provincia}, {data.regione}" if data.provincia and data.regione else "Roma, Lazio"
-    
-    # Generate email verification token
+
     verification_token = secrets.token_urlsafe(32)
-    
+
     user_id = str(uuid.uuid4())
     user = {
         "id": user_id,
@@ -446,10 +440,9 @@ async def register(data: UserRegister):
         "rating_count": 0,
     }
     await db.users.insert_one(user)
-    
-    # Send verification email
+
     send_verification_email(data.email.lower(), data.name, verification_token)
-    
+
     token = create_token(user_id, data.email.lower())
     return {
         "token": token,
@@ -468,16 +461,14 @@ async def register(data: UserRegister):
 
 @api_router.post("/auth/verify-email")
 async def verify_email(token: str):
-    """Verify user email with token"""
     user = await db.users.find_one({"email_verification_token": token})
     if not user:
         raise HTTPException(status_code=400, detail="Token non valido o scaduto")
-    
-    # Check expiry
+
     expires = datetime.fromisoformat(user.get("email_verification_expires", ""))
     if datetime.now(timezone.utc) > expires.replace(tzinfo=timezone.utc):
         raise HTTPException(status_code=400, detail="Token scaduto. Richiedi un nuovo link di verifica.")
-    
+
     await db.users.update_one(
         {"id": user["id"]},
         {"$set": {
@@ -490,10 +481,9 @@ async def verify_email(token: str):
 
 @api_router.post("/auth/resend-verification")
 async def resend_verification(user=Depends(get_current_user)):
-    """Resend verification email"""
     if user.get("email_verified"):
         raise HTTPException(status_code=400, detail="Email già verificata")
-    
+
     new_token = secrets.token_urlsafe(32)
     await db.users.update_one(
         {"id": user["id"]},
@@ -507,12 +497,10 @@ async def resend_verification(user=Depends(get_current_user)):
 
 @api_router.post("/auth/forgot-password")
 async def forgot_password(data: PasswordResetRequest):
-    """Request password reset"""
     user = await db.users.find_one({"email": data.email.lower()})
     if not user:
-        # Don't reveal if email exists
         return {"message": "Se l'email esiste, riceverai un link per reimpostare la password"}
-    
+
     reset_token = secrets.token_urlsafe(32)
     await db.users.update_one(
         {"id": user["id"]},
@@ -526,18 +514,17 @@ async def forgot_password(data: PasswordResetRequest):
 
 @api_router.post("/auth/reset-password")
 async def reset_password(data: PasswordResetConfirm):
-    """Reset password with token"""
     user = await db.users.find_one({"password_reset_token": data.token})
     if not user:
         raise HTTPException(status_code=400, detail="Token non valido o scaduto")
-    
+
     expires = datetime.fromisoformat(user.get("password_reset_expires", ""))
     if datetime.now(timezone.utc) > expires.replace(tzinfo=timezone.utc):
         raise HTTPException(status_code=400, detail="Token scaduto. Richiedi un nuovo link.")
-    
+
     if len(data.new_password) < 6:
         raise HTTPException(status_code=400, detail="La password deve avere almeno 6 caratteri")
-    
+
     await db.users.update_one(
         {"id": user["id"]},
         {"$set": {
@@ -602,14 +589,14 @@ async def update_location(data: LocationUpdate, user=Depends(get_current_user)):
             hours = int(remaining.total_seconds() // 3600)
             mins = int((remaining.total_seconds() % 3600) // 60)
             raise HTTPException(status_code=429, detail=f"Puoi cambiare posizione tra {hours}h {mins}m")
-    
+
     lat = data.latitude
     lng = data.longitude
     if data.regione and data.provincia:
         lat, lng = find_province_coords(data.regione, data.provincia)
-    
-    neighborhood = data.neighborhood or f"{data.provincia}, {data.regione}" if data.provincia else user.get("neighborhood", "")
-    
+
+    neighborhood = data.neighborhood or (f"{data.provincia}, {data.regione}" if data.provincia else user.get("neighborhood", ""))
+
     await db.users.update_one(
         {"id": user["id"]},
         {"$set": {
@@ -625,37 +612,24 @@ async def update_location(data: LocationUpdate, user=Depends(get_current_user)):
 
 @api_router.delete("/users/me")
 async def delete_account(user=Depends(get_current_user)):
-    """Delete user account and all associated data (GDPR compliance)"""
     user_id = user["id"]
-    
-    # Delete user's listings
+
     await db.listings.delete_many({"seller_id": user_id})
-    
-    # Delete user's messages in chats
     await db.chats.delete_many({"$or": [{"buyer_id": user_id}, {"seller_id": user_id}]})
-    
-    # Delete user's reports
     await db.reports.delete_many({"reporter_id": user_id})
-    
-    # Delete user's ratings
     await db.ratings.delete_many({"$or": [{"rater_id": user_id}, {"rated_id": user_id}]})
-    
-    # Finally delete the user
     await db.users.delete_one({"id": user_id})
-    
+
     logger.info(f"Account deleted: {user['email']}")
     return {"message": "Account eliminato con successo"}
 
 @api_router.put("/users/avatar")
 async def update_avatar(data: AvatarUpdate, user=Depends(get_current_user)):
-    """Update user avatar"""
     if not data.avatar:
         raise HTTPException(status_code=400, detail="Avatar richiesto")
-    
-    # Validate base64 image (basic check)
     if not data.avatar.startswith('data:image/'):
         raise HTTPException(status_code=400, detail="Formato immagine non valido")
-    
+
     await db.users.update_one(
         {"id": user["id"]},
         {"$set": {"avatar": data.avatar}}
@@ -791,51 +765,64 @@ async def delete_listing(listing_id: str, user=Depends(get_current_user)):
 # --- Stripe Payment Routes ---
 @api_router.post("/checkout/create")
 async def create_checkout(data: PurchaseRequest, request: Request, user=Depends(get_current_user)):
+    if not STRIPE_API_KEY:
+        raise HTTPException(status_code=500, detail="STRIPE_API_KEY non configurata")
+
     listing = await db.listings.find_one({"id": data.listing_id, "status": "active"}, {"_id": 0})
     if not listing:
         raise HTTPException(status_code=404, detail="Annuncio non disponibile")
     if listing["seller_id"] == user["id"]:
         raise HTTPException(status_code=400, detail="Non puoi acquistare il tuo annuncio")
+
     existing = await db.payment_transactions.find_one({
-        "listing_id": data.listing_id, "buyer_id": user["id"],
+        "listing_id": data.listing_id,
+        "buyer_id": user["id"],
         "payment_status": {"$in": ["paid", "initiated"]}
     })
     if existing:
         raise HTTPException(status_code=400, detail="Hai già un pagamento in corso per questo articolo")
-    
+
     commission = round(listing["price"] * COMMISSION_RATE, 2)
     total = round(listing["price"] + commission, 2)
-    
+
     origin_url = data.origin_url.rstrip('/')
     success_url = f"{origin_url}/payment-success?session_id={{CHECKOUT_SESSION_ID}}"
     cancel_url = f"{origin_url}/payment-cancel"
-    
-    host_url = str(request.base_url).rstrip('/')
-    webhook_url = f"{host_url}api/webhook/stripe"
-    
-    stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
-    
+
     tx_id = str(uuid.uuid4())
-    metadata = {
-        "tx_id": tx_id,
-        "listing_id": data.listing_id,
-        "buyer_id": user["id"],
-        "seller_id": listing["seller_id"],
-        "commission": str(commission),
-    }
-    
-    checkout_request = CheckoutSessionRequest(
-        amount=total,
-        currency="eur",
-        success_url=success_url,
-        cancel_url=cancel_url,
-        metadata=metadata,
-    )
-    session: CheckoutSessionResponse = await stripe_checkout.create_checkout_session(checkout_request)
-    
+
+    try:
+        session = stripe.checkout.Session.create(
+            payment_method_types=["card"],
+            mode="payment",
+            success_url=success_url,
+            cancel_url=cancel_url,
+            line_items=[{
+                "price_data": {
+                    "currency": "eur",
+                    "product_data": {
+                        "name": listing["title"],
+                        "description": f'Prezzo articolo €{listing["price"]:.2f} + commissione €{commission:.2f}',
+                    },
+                    "unit_amount": int(round(total * 100)),
+                },
+                "quantity": 1,
+            }],
+            metadata={
+                "tx_id": tx_id,
+                "listing_id": data.listing_id,
+                "buyer_id": user["id"],
+                "seller_id": listing["seller_id"],
+                "commission": str(commission),
+            },
+        )
+    except Exception as e:
+        logger.error(f"Stripe checkout creation failed: {e}")
+        raise HTTPException(status_code=500, detail="Errore nella creazione del checkout Stripe")
+
     payment_tx = {
         "id": tx_id,
-        "session_id": session.session_id,
+        "session_id": session.id,
         "listing_id": data.listing_id,
         "listing_title": listing["title"],
         "listing_image": listing["images"][0] if listing.get("images") else "",
@@ -852,53 +839,59 @@ async def create_checkout(data: PurchaseRequest, request: Request, user=Depends(
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     await db.payment_transactions.insert_one(payment_tx)
-    
-    return {"checkout_url": session.url, "session_id": session.session_id, "tx_id": tx_id}
+
+    return {"checkout_url": session.url, "session_id": session.id, "tx_id": tx_id}
 
 @api_router.get("/checkout/status/{session_id}")
-async def check_payment_status(session_id: str, request: Request, user=Depends(get_current_user)):
+async def check_payment_status(session_id: str, user=Depends(get_current_user)):
+    if not STRIPE_API_KEY:
+        raise HTTPException(status_code=500, detail="STRIPE_API_KEY non configurata")
+
     payment_tx = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
     if not payment_tx:
         raise HTTPException(status_code=404, detail="Transazione non trovata")
-    
+
     if payment_tx["payment_status"] == "paid":
         return {"status": "complete", "payment_status": "paid", "tx_id": payment_tx["id"]}
-    
-    host_url = str(request.base_url).rstrip('/')
-    webhook_url = f"{host_url}api/webhook/stripe"
-    stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
-    
+
     try:
-        checkout_status: CheckoutStatusResponse = await stripe_checkout.get_checkout_status(session_id)
+        session = stripe.checkout.Session.retrieve(session_id)
     except Exception as e:
         logger.error(f"Stripe status check failed: {e}")
-        return {"status": payment_tx.get("status", "pending"), "payment_status": payment_tx["payment_status"], "tx_id": payment_tx["id"]}
-    
-    if checkout_status.payment_status == "paid" and payment_tx["payment_status"] != "paid":
+        return {
+            "status": payment_tx.get("status", "pending"),
+            "payment_status": payment_tx["payment_status"],
+            "tx_id": payment_tx["id"]
+        }
+
+    if session.payment_status == "paid" and payment_tx["payment_status"] != "paid":
         await db.payment_transactions.update_one(
             {"session_id": session_id, "payment_status": {"$ne": "paid"}},
             {"$set": {"payment_status": "paid", "status": "completed"}}
         )
         await _complete_purchase(payment_tx)
         return {"status": "complete", "payment_status": "paid", "tx_id": payment_tx["id"]}
-    
-    if checkout_status.status == "expired":
+
+    if getattr(session, "status", None) == "expired":
         await db.payment_transactions.update_one(
             {"session_id": session_id},
             {"$set": {"payment_status": "expired", "status": "expired"}}
         )
         return {"status": "expired", "payment_status": "expired", "tx_id": payment_tx["id"]}
-    
-    return {"status": "pending", "payment_status": checkout_status.payment_status, "tx_id": payment_tx["id"]}
+
+    return {
+        "status": "pending",
+        "payment_status": getattr(session, "payment_status", "unpaid"),
+        "tx_id": payment_tx["id"]
+    }
 
 async def _complete_purchase(payment_tx: dict):
-    """Complete the purchase after successful payment: mark listing as sold, create transaction, create chat."""
     existing_tx = await db.transactions.find_one({"payment_tx_id": payment_tx["id"]})
     if existing_tx:
         return
-    
+
     await db.listings.update_one({"id": payment_tx["listing_id"]}, {"$set": {"status": "sold"}})
-    
+
     tx_id = str(uuid.uuid4())
     transaction = {
         "id": tx_id,
@@ -917,7 +910,7 @@ async def _complete_purchase(payment_tx: dict):
         "created_at": datetime.now(timezone.utc).isoformat()
     }
     await db.transactions.insert_one(transaction)
-    
+
     chat_id = str(uuid.uuid4())
     chat = {
         "id": chat_id,
@@ -933,7 +926,7 @@ async def _complete_purchase(payment_tx: dict):
             "id": str(uuid.uuid4()),
             "sender_id": "system",
             "sender_name": "Second Chance Market",
-            "text": f"Acquisto completato! Organizzatevi per il ritiro di \"{payment_tx['listing_title']}\".",
+            "text": f'Acquisto completato! Organizzatevi per il ritiro di "{payment_tx["listing_title"]}".',
             "created_at": datetime.now(timezone.utc).isoformat()
         }],
         "created_at": datetime.now(timezone.utc).isoformat()
@@ -942,28 +935,40 @@ async def _complete_purchase(payment_tx: dict):
 
 @api_router.post("/webhook/stripe")
 async def stripe_webhook(request: Request):
+    if not STRIPE_API_KEY:
+        raise HTTPException(status_code=500, detail="STRIPE_API_KEY non configurata")
+
     body = await request.body()
     signature = request.headers.get("Stripe-Signature", "")
-    
-    host_url = str(request.base_url).rstrip('/')
-    webhook_url = f"{host_url}api/webhook/stripe"
-    stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
-    
+
     try:
-        webhook_response = await stripe_checkout.handle_webhook(body, signature)
-        if webhook_response.payment_status == "paid":
-            session_id = webhook_response.session_id
-            payment_tx = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
-            if payment_tx and payment_tx["payment_status"] != "paid":
-                await db.payment_transactions.update_one(
-                    {"session_id": session_id, "payment_status": {"$ne": "paid"}},
-                    {"$set": {"payment_status": "paid", "status": "completed"}}
-                )
-                await _complete_purchase(payment_tx)
-        return {"status": "ok"}
+        if STRIPE_WEBHOOK_SECRET:
+            event = stripe.Webhook.construct_event(
+                payload=body,
+                sig_header=signature,
+                secret=STRIPE_WEBHOOK_SECRET
+            )
+        else:
+            event = json.loads(body.decode("utf-8"))
+            logger.warning("STRIPE_WEBHOOK_SECRET non configurata: webhook non verificato")
     except Exception as e:
-        logger.error(f"Webhook error: {e}")
-        return {"status": "error"}
+        logger.error(f"Webhook verification error: {e}")
+        raise HTTPException(status_code=400, detail="Webhook non valido")
+
+    event_type = event.get("type")
+    data_object = event.get("data", {}).get("object", {})
+
+    if event_type == "checkout.session.completed":
+        session_id = data_object.get("id")
+        payment_tx = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+        if payment_tx and payment_tx["payment_status"] != "paid":
+            await db.payment_transactions.update_one(
+                {"session_id": session_id, "payment_status": {"$ne": "paid"}},
+                {"$set": {"payment_status": "paid", "status": "completed"}}
+            )
+            await _complete_purchase(payment_tx)
+
+    return {"status": "ok"}
 
 # --- Transaction Routes ---
 @api_router.get("/transactions")
@@ -1001,15 +1006,14 @@ async def admin_delete_user(user_id: str, user=Depends(get_admin_user)):
         raise HTTPException(status_code=404, detail="Utente non trovato")
     if target.get("role") == "admin":
         raise HTTPException(status_code=400, detail="Non puoi eliminare un admin")
-    
+
     await db.users.delete_one({"id": user_id})
     await db.listings.update_many({"seller_id": user_id}, {"$set": {"status": "removed"}})
-    
+
     return {"message": f"Utente {target['name']} eliminato e annunci rimossi"}
 
 @api_router.post("/admin/seed")
 async def admin_seed():
-    """Create admin account if not exists"""
     existing = await db.users.find_one({"email": ADMIN_EMAIL})
     if existing:
         await db.users.update_one({"email": ADMIN_EMAIL}, {"$set": {"role": "admin"}})
@@ -1085,7 +1089,7 @@ async def seed_data():
     existing = await db.listings.count_documents({})
     if existing > 0:
         return {"message": "Dati già presenti", "count": existing}
-    
+
     seller_id = str(uuid.uuid4())
     seller = {
         "id": seller_id, "name": "Marco Rossi", "email": "marco@demo.it",
@@ -1103,7 +1107,7 @@ async def seed_data():
         "location_updated_at": None, "created_at": datetime.now(timezone.utc).isoformat(), "avatar": None
     }
     await db.users.insert_many([seller, seller2])
-    
+
     sample_listings = [
         {"title": "iPhone 13 Pro", "description": "Perfette condizioni, batteria 89%. Include caricatore originale.", "price": 450.00, "category": "Elettronica", "condition": "Come nuovo", "seller_id": seller_id, "seller_name": "Marco Rossi", "seller_neighborhood": "Roma, Lazio", "latitude": 41.8894, "longitude": 12.4726},
         {"title": "MacBook Air M1", "description": "Usato poco, 256GB, grigio siderale. Ideale per studenti.", "price": 680.00, "category": "Elettronica", "condition": "Buono", "seller_id": seller2_id, "seller_name": "Giulia Bianchi", "seller_neighborhood": "Milano, Lombardia", "latitude": 45.4642, "longitude": 9.1900},
@@ -1118,32 +1122,30 @@ async def seed_data():
         {"title": "Valigia Samsonite", "description": "Valigia grande, 4 ruote, colore nero. Usata 2 volte.", "price": 45.00, "category": "Altro", "condition": "Come nuovo", "seller_id": seller_id, "seller_name": "Marco Rossi", "seller_neighborhood": "Roma, Lazio", "latitude": 41.8894, "longitude": 12.4726},
         {"title": "Set Pentole Acciaio", "description": "Set 5 pentole acciaio inox, marca Lagostina.", "price": 50.00, "category": "Altro", "condition": "Buono", "seller_id": seller2_id, "seller_name": "Giulia Bianchi", "seller_neighborhood": "Milano, Lombardia", "latitude": 45.4642, "longitude": 9.1900},
     ]
-    
+
     for item in sample_listings:
         item["id"] = str(uuid.uuid4())
         item["images"] = []
         item["status"] = "active"
         item["created_at"] = datetime.now(timezone.utc).isoformat()
-    
+
     await db.listings.insert_many(sample_listings)
     return {"message": f"Seed completato: {len(sample_listings)} annunci creati"}
 
 # --- Reports Routes ---
 @api_router.post("/reports")
 async def create_report(data: ReportCreate, user=Depends(get_current_user)):
-    """Create a report for a user or listing"""
     if data.reported_type not in ["user", "listing"]:
         raise HTTPException(status_code=400, detail="Tipo di segnalazione non valido")
-    
-    # Verify the reported item exists
+
     if data.reported_type == "user":
         reported = await db.users.find_one({"id": data.reported_id})
     else:
         reported = await db.listings.find_one({"id": data.reported_id})
-    
+
     if not reported:
         raise HTTPException(status_code=404, detail="Elemento non trovato")
-    
+
     report = {
         "id": str(uuid.uuid4()),
         "reporter_id": user["id"],
@@ -1152,12 +1154,11 @@ async def create_report(data: ReportCreate, user=Depends(get_current_user)):
         "reported_id": data.reported_id,
         "reason": data.reason,
         "description": data.description,
-        "status": "pending",  # pending, reviewed, resolved
+        "status": "pending",
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.reports.insert_one(report)
-    
-    # Send notification email to admin
+
     send_email(
         "support@secondchancemarket.store",
         f"Nuova Segnalazione: {data.reason}",
@@ -1166,64 +1167,58 @@ async def create_report(data: ReportCreate, user=Depends(get_current_user)):
         f"<p>Motivo: {data.reason}</p>"
         f"<p>Descrizione: {data.description}</p>"
     )
-    
+
     return {"message": "Segnalazione inviata. Grazie per aiutarci a mantenere la community sicura."}
 
 @api_router.get("/admin/reports")
 async def get_reports(user=Depends(get_current_user)):
-    """Get all reports (admin only)"""
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Accesso non autorizzato")
-    
+
     reports = await db.reports.find({}, {"_id": 0}).sort("created_at", -1).to_list(100)
     return reports
 
 @api_router.put("/admin/reports/{report_id}")
 async def update_report(report_id: str, status: str, user=Depends(get_current_user)):
-    """Update report status (admin only)"""
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Accesso non autorizzato")
-    
+
     if status not in ["pending", "reviewed", "resolved"]:
         raise HTTPException(status_code=400, detail="Stato non valido")
-    
+
     result = await db.reports.update_one(
         {"id": report_id},
         {"$set": {"status": status}}
     )
     if result.modified_count == 0:
         raise HTTPException(status_code=404, detail="Segnalazione non trovata")
-    
+
     return {"message": "Stato aggiornato"}
 
 # --- Ratings Routes ---
 @api_router.post("/ratings")
 async def create_rating(data: RatingCreate, user=Depends(get_current_user)):
-    """Create a rating for a completed transaction"""
     if not 1 <= data.rating <= 5:
         raise HTTPException(status_code=400, detail="La valutazione deve essere tra 1 e 5")
-    
-    # Find the transaction
+
     transaction = await db.transactions.find_one({"id": data.transaction_id, "status": "completed"})
     if not transaction:
         raise HTTPException(status_code=404, detail="Transazione non trovata o non completata")
-    
-    # Determine who is being rated
+
     if user["id"] == transaction["buyer_id"]:
         rated_id = transaction["seller_id"]
     elif user["id"] == transaction["seller_id"]:
         rated_id = transaction["buyer_id"]
     else:
         raise HTTPException(status_code=403, detail="Non puoi valutare questa transazione")
-    
-    # Check if already rated
+
     existing = await db.ratings.find_one({
         "transaction_id": data.transaction_id,
         "rater_id": user["id"]
     })
     if existing:
         raise HTTPException(status_code=400, detail="Hai già valutato questa transazione")
-    
+
     rating = {
         "id": str(uuid.uuid4()),
         "transaction_id": data.transaction_id,
@@ -1235,8 +1230,7 @@ async def create_rating(data: RatingCreate, user=Depends(get_current_user)):
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.ratings.insert_one(rating)
-    
-    # Update rated user's average rating
+
     all_ratings = await db.ratings.find({"rated_id": rated_id}).to_list(1000)
     avg = sum(r["rating"] for r in all_ratings) / len(all_ratings)
     await db.users.update_one(
@@ -1246,68 +1240,63 @@ async def create_rating(data: RatingCreate, user=Depends(get_current_user)):
             "rating_count": len(all_ratings)
         }}
     )
-    
+
     return {"message": "Valutazione inviata"}
 
 @api_router.get("/users/{user_id}/ratings")
 async def get_user_ratings(user_id: str):
-    """Get ratings for a user"""
     ratings = await db.ratings.find({"rated_id": user_id}, {"_id": 0}).sort("created_at", -1).to_list(50)
     return ratings
 
 @api_router.get("/transactions/{transaction_id}/can-rate")
 async def can_rate_transaction(transaction_id: str, user=Depends(get_current_user)):
-    """Check if user can rate this transaction"""
     transaction = await db.transactions.find_one({"id": transaction_id, "status": "completed"})
     if not transaction:
         return {"can_rate": False, "reason": "Transazione non trovata o non completata"}
-    
+
     if user["id"] not in [transaction["buyer_id"], transaction["seller_id"]]:
         return {"can_rate": False, "reason": "Non sei parte di questa transazione"}
-    
+
     existing = await db.ratings.find_one({
         "transaction_id": transaction_id,
         "rater_id": user["id"]
     })
     if existing:
         return {"can_rate": False, "reason": "Hai già valutato questa transazione"}
-    
+
     return {"can_rate": True}
 
 # --- Valuation Service Routes ---
-VALUATION_PRICE = 100  # 1.00 EUR in cents
+VALUATION_PRICE = 100
 
 @api_router.post("/valuations/create-checkout")
 async def create_valuation_checkout(data: ValuationRequest, user=Depends(get_current_user)):
-    """Create a Stripe checkout session for valuation service"""
-    import stripe
-    stripe.api_key = STRIPE_API_KEY
-    
+    if not STRIPE_API_KEY:
+        raise HTTPException(status_code=500, detail="STRIPE_API_KEY non configurata")
+
     if not data.images or len(data.images) == 0:
         raise HTTPException(status_code=400, detail="Almeno una foto è richiesta")
-    
-    # Create valuation request first (pending payment)
+
     valuation_id = str(uuid.uuid4())
     valuation = {
         "id": valuation_id,
         "user_id": user["id"],
         "user_name": user["name"],
         "user_email": user["email"],
-        "images": data.images[:5],  # Max 5 images
+        "images": data.images[:5],
         "category": data.category,
         "dating": data.dating,
         "condition": data.condition,
         "description": data.description,
         "brand": data.brand,
-        "status": "pending_payment",  # pending_payment, paid, in_progress, completed
+        "status": "pending_payment",
         "estimated_value": None,
         "operator_notes": "",
         "messages": [],
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
     await db.valuations.insert_one(valuation)
-    
-    # Create Stripe checkout session
+
     try:
         session = stripe.checkout.Session.create(
             payment_method_types=['card'],
@@ -1337,10 +1326,9 @@ async def create_valuation_checkout(data: ValuationRequest, user=Depends(get_cur
 
 @api_router.get("/valuations/status/{session_id}")
 async def check_valuation_payment(session_id: str, valuation_id: str):
-    """Check valuation payment status and activate if paid"""
-    import stripe
-    stripe.api_key = STRIPE_API_KEY
-    
+    if not STRIPE_API_KEY:
+        raise HTTPException(status_code=500, detail="STRIPE_API_KEY non configurata")
+
     try:
         session = stripe.checkout.Session.retrieve(session_id)
         if session.payment_status == 'paid':
@@ -1352,8 +1340,7 @@ async def check_valuation_payment(session_id: str, valuation_id: str):
                     "paid_at": datetime.now(timezone.utc).isoformat(),
                 }}
             )
-            
-            # Notify admin
+
             valuation = await db.valuations.find_one({"id": valuation_id})
             if valuation:
                 send_email(
@@ -1365,7 +1352,7 @@ async def check_valuation_payment(session_id: str, valuation_id: str):
                     f"<p>Condizioni: {valuation['condition']}</p>"
                     f"<p>Descrizione: {valuation['description']}</p>"
                 )
-            
+
             return {"status": "paid", "message": "Pagamento confermato! Un operatore ti contatterà presto."}
         return {"status": "pending", "message": "Pagamento in attesa"}
     except Exception as e:
@@ -1373,7 +1360,6 @@ async def check_valuation_payment(session_id: str, valuation_id: str):
 
 @api_router.get("/valuations")
 async def get_user_valuations(user=Depends(get_current_user)):
-    """Get user's valuation requests"""
     valuations = await db.valuations.find(
         {"user_id": user["id"]},
         {"_id": 0}
@@ -1382,28 +1368,24 @@ async def get_user_valuations(user=Depends(get_current_user)):
 
 @api_router.get("/valuations/{valuation_id}")
 async def get_valuation(valuation_id: str, user=Depends(get_current_user)):
-    """Get a specific valuation"""
     valuation = await db.valuations.find_one({"id": valuation_id}, {"_id": 0})
     if not valuation:
         raise HTTPException(status_code=404, detail="Valutazione non trovata")
-    
-    # Check access
+
     if valuation["user_id"] != user["id"] and user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Accesso non autorizzato")
-    
+
     return valuation
 
 @api_router.post("/valuations/{valuation_id}/messages")
 async def send_valuation_message(valuation_id: str, data: ValuationMessage, user=Depends(get_current_user)):
-    """Send a message in valuation chat"""
     valuation = await db.valuations.find_one({"id": valuation_id})
     if not valuation:
         raise HTTPException(status_code=404, detail="Valutazione non trovata")
-    
-    # Check access
+
     if valuation["user_id"] != user["id"] and user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Accesso non autorizzato")
-    
+
     message = {
         "id": str(uuid.uuid4()),
         "sender_id": user["id"],
@@ -1412,24 +1394,23 @@ async def send_valuation_message(valuation_id: str, data: ValuationMessage, user
         "text": data.text,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
-    
+
     await db.valuations.update_one(
         {"id": valuation_id},
         {"$push": {"messages": message}}
     )
-    
+
     return {"message": "Messaggio inviato", "data": message}
 
 @api_router.put("/valuations/{valuation_id}/complete")
 async def complete_valuation(valuation_id: str, estimated_value: float, operator_notes: str = "", user=Depends(get_current_user)):
-    """Complete a valuation (admin only)"""
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Solo operatori possono completare valutazioni")
-    
+
     valuation = await db.valuations.find_one({"id": valuation_id})
     if not valuation:
         raise HTTPException(status_code=404, detail="Valutazione non trovata")
-    
+
     await db.valuations.update_one(
         {"id": valuation_id},
         {"$set": {
@@ -1439,8 +1420,7 @@ async def complete_valuation(valuation_id: str, estimated_value: float, operator
             "completed_at": datetime.now(timezone.utc).isoformat(),
         }}
     )
-    
-    # Notify user
+
     send_email(
         valuation["user_email"],
         "La tua Valutazione è Pronta!",
@@ -1450,15 +1430,14 @@ async def complete_valuation(valuation_id: str, estimated_value: float, operator
         f"<p>Note: {operator_notes}</p>"
         f"<p>Apri l'app per vedere i dettagli completi.</p>"
     )
-    
+
     return {"message": "Valutazione completata"}
 
 @api_router.get("/admin/valuations")
 async def get_admin_valuations(user=Depends(get_current_user)):
-    """Get all valuations (admin only)"""
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Accesso non autorizzato")
-    
+
     valuations = await db.valuations.find(
         {"status": {"$ne": "pending_payment"}},
         {"_id": 0}
