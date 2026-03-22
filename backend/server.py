@@ -1012,6 +1012,26 @@ async def admin_delete_user(user_id: str, user=Depends(get_admin_user)):
 
     return {"message": f"Utente {target['name']} eliminato e annunci rimossi"}
 
+@api_router.get("/admin/listings")
+async def admin_get_listings(user=Depends(get_admin_user)):
+    """Get all listings for admin moderation"""
+    listings = await db.listings.find({}, {"_id": 0}).sort("created_at", -1).to_list(500)
+    for listing in listings:
+        seller = await db.users.find_one({"id": listing.get("seller_id")}, {"_id": 0, "name": 1, "email": 1})
+        listing["seller_name"] = seller.get("name", "Sconosciuto") if seller else "Sconosciuto"
+        listing["seller_email"] = seller.get("email", "") if seller else ""
+    return listings
+
+@api_router.delete("/admin/listings/{listing_id}")
+async def admin_delete_listing(listing_id: str, user=Depends(get_admin_user)):
+    """Delete any listing (admin only)"""
+    listing = await db.listings.find_one({"id": listing_id})
+    if not listing:
+        raise HTTPException(status_code=404, detail="Annuncio non trovato")
+    await db.listings.delete_one({"id": listing_id})
+    logger.info(f"Admin deleted listing: {listing_id} - {listing.get('title')}")
+    return {"message": f"Annuncio '{listing.get('title')}' eliminato"}
+
 @api_router.post("/admin/seed")
 async def admin_seed():
     existing = await db.users.find_one({"email": ADMIN_EMAIL})
