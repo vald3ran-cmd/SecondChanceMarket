@@ -44,16 +44,14 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 # --- Stripe Setup ---
-from emergentintegrations.payments.stripe.checkout import (
-    StripeCheckout, CheckoutSessionResponse, CheckoutStatusResponse, CheckoutSessionRequest
-)
+import stripe
 
 # --- Constants ---
 CATEGORIES = ["Elettronica", "Abbigliamento", "Casa & Arredamento", "Sport & Tempo Libero", "Libri & Media", "Altro"]
 CONDITIONS = ["Nuovo", "Come nuovo", "Buono", "Discreto", "Da riparare"]
 COMMISSION_RATE = 0.05
 
-# --- Italian Macro Areas (kept for backwards compatibility) ---
+# --- Italian Macro Areas ---
 MACRO_AREAS: List[Dict] = [
     {"regione": "Lombardia", "province": [
         {"nome": "Milano", "lat": 45.4642, "lng": 9.1900},
@@ -373,6 +371,7 @@ def send_transaction_complete_email(to: str, buyer_name: str, seller_name: str, 
     </div>
     """
     return send_email(to, f"Transazione Completata: {listing_title}", html)
+
 # --- Auth Helpers ---
 def create_token(user_id: str, email: str) -> str:
     payload = {
@@ -853,10 +852,7 @@ async def create_checkout(data: PurchaseRequest, request: Request, user=Depends(
     success_url = f"{origin_url}/payment-success?session_id={{CHECKOUT_SESSION_ID}}"
     cancel_url = f"{origin_url}/payment-cancel"
     
-    host_url = str(request.base_url).rstrip('/')
-    webhook_url = f"{host_url}api/webhook/stripe"
-    
-    stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
+    stripe.api_key = STRIPE_API_KEY
     
     tx_id = str(uuid.uuid4())
     metadata = {
@@ -867,18 +863,33 @@ async def create_checkout(data: PurchaseRequest, request: Request, user=Depends(
         "commission": str(commission),
     }
     
-    checkout_request = CheckoutSessionRequest(
-        amount=total,
-        currency="eur",
-        success_url=success_url,
-        cancel_url=cancel_url,
-        metadata=metadata,
-    )
-    session: CheckoutSessionResponse = await stripe_checkout.create_checkout_session(checkout_request)
+    # Create Stripe checkout session
+    try:
+        session = stripe.checkout.Session.create(
+            payment_method_types=['card'],
+            line_items=[{
+                'price_data': {
+                    'currency': 'eur',
+                    'product_data': {
+                        'name': listing["title"],
+                        'description': f'Acquisto su Second Chance Market',
+                    },
+                    'unit_amount': int(total * 100),  # Stripe uses cents
+                },
+                'quantity': 1,
+            }],
+            mode='payment',
+            success_url=success_url,
+            cancel_url=cancel_url,
+            metadata=metadata,
+        )
+    except Exception as e:
+        logger.error(f"Stripe checkout creation failed: {e}")
+        raise HTTPException(status_code=500, detail="Errore nella creazione del pagamento")
     
     payment_tx = {
         "id": tx_id,
-        "session_id": session.session_id,
+        "session_id": session.id,
         "listing_id": data.listing_id,
         "listing_title": listing["title"],
         "listing_image": listing["images"][0] if listing.get("images") else "",
@@ -896,7 +907,7 @@ async def create_checkout(data: PurchaseRequest, request: Request, user=Depends(
     }
     await db.payment_transactions.insert_one(payment_tx)
     
-    return {"checkout_url": session.url, "session_id": session.session_id, "tx_id": tx_id}
+    return {"checkout_url": session.url, "session_id": session.id, "tx_id": tx_id}
 
 @api_router.get("/checkout/status/{session_id}")
 async def check_payment_status(session_id: str, request: Request, user=Depends(get_current_user)):
@@ -907,17 +918,15 @@ async def check_payment_status(session_id: str, request: Request, user=Depends(g
     if payment_tx["payment_status"] == "paid":
         return {"status": "complete", "payment_status": "paid", "tx_id": payment_tx["id"]}
     
-    host_url = str(request.base_url).rstrip('/')
-    webhook_url = f"{host_url}api/webhook/stripe"
-    stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
+    stripe.api_key = STRIPE_API_KEY
     
     try:
-        checkout_status: CheckoutStatusResponse = await stripe_checkout.get_checkout_status(session_id)
+        checkout_session = stripe.checkout.Session.retrieve(session_id)
     except Exception as e:
         logger.error(f"Stripe status check failed: {e}")
         return {"status": payment_tx.get("status", "pending"), "payment_status": payment_tx["payment_status"], "tx_id": payment_tx["id"]}
     
-    if checkout_status.payment_status == "paid" and payment_tx["payment_status"] != "paid":
+    if checkout_session.payment_status == "paid" and payment_tx["payment_status"] != "paid":
         await db.payment_transactions.update_one(
             {"session_id": session_id, "payment_status": {"$ne": "paid"}},
             {"$set": {"payment_status": "paid", "status": "completed"}}
@@ -925,14 +934,14 @@ async def check_payment_status(session_id: str, request: Request, user=Depends(g
         await _complete_purchase(payment_tx)
         return {"status": "complete", "payment_status": "paid", "tx_id": payment_tx["id"]}
     
-    if checkout_status.status == "expired":
+    if checkout_session.status == "expired":
         await db.payment_transactions.update_one(
             {"session_id": session_id},
             {"$set": {"payment_status": "expired", "status": "expired"}}
         )
         return {"status": "expired", "payment_status": "expired", "tx_id": payment_tx["id"]}
     
-    return {"status": "pending", "payment_status": checkout_status.payment_status, "tx_id": payment_tx["id"]}
+    return {"status": "pending", "payment_status": checkout_session.payment_status, "tx_id": payment_tx["id"]}
 
 async def _complete_purchase(payment_tx: dict):
     """Complete the purchase after successful payment: mark listing as sold, create transaction, create chat."""
@@ -988,21 +997,30 @@ async def stripe_webhook(request: Request):
     body = await request.body()
     signature = request.headers.get("Stripe-Signature", "")
     
-    host_url = str(request.base_url).rstrip('/')
-    webhook_url = f"{host_url}api/webhook/stripe"
-    stripe_checkout = StripeCheckout(api_key=STRIPE_API_KEY, webhook_url=webhook_url)
+    stripe.api_key = STRIPE_API_KEY
+    webhook_secret = os.environ.get('STRIPE_WEBHOOK_SECRET', '')
     
     try:
-        webhook_response = await stripe_checkout.handle_webhook(body, signature)
-        if webhook_response.payment_status == "paid":
-            session_id = webhook_response.session_id
-            payment_tx = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
-            if payment_tx and payment_tx["payment_status"] != "paid":
-                await db.payment_transactions.update_one(
-                    {"session_id": session_id, "payment_status": {"$ne": "paid"}},
-                    {"$set": {"payment_status": "paid", "status": "completed"}}
-                )
-                await _complete_purchase(payment_tx)
+        if webhook_secret:
+            event = stripe.Webhook.construct_event(body, signature, webhook_secret)
+        else:
+            # If no webhook secret, parse the body directly (less secure)
+            import json
+            event = json.loads(body)
+        
+        if event.get('type') == 'checkout.session.completed':
+            session = event['data']['object']
+            session_id = session['id']
+            
+            if session.get('payment_status') == 'paid':
+                payment_tx = await db.payment_transactions.find_one({"session_id": session_id}, {"_id": 0})
+                if payment_tx and payment_tx["payment_status"] != "paid":
+                    await db.payment_transactions.update_one(
+                        {"session_id": session_id, "payment_status": {"$ne": "paid"}},
+                        {"$set": {"payment_status": "paid", "status": "completed"}}
+                    )
+                    await _complete_purchase(payment_tx)
+        
         return {"status": "ok"}
     except Exception as e:
         logger.error(f"Webhook error: {e}")
@@ -1016,6 +1034,7 @@ async def get_transactions(user=Depends(get_current_user)):
         {"_id": 0}
     ).sort("created_at", -1).to_list(100)
     return txs
+
 # --- Admin Routes ---
 ADMIN_EMAIL = os.environ.get('ADMIN_EMAIL', 'admin@scm.it')
 
@@ -1088,8 +1107,6 @@ async def admin_seed():
         "neighborhood": "Roma, Lazio",
         "regione": "Lazio",
         "provincia": "Roma",
-        "paese": "Italia",
-        "citta": "Roma",
         "location_updated_at": None,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "avatar": None,
@@ -1156,7 +1173,7 @@ async def seed_data():
         "id": seller_id, "name": "Marco Rossi", "email": "marco@demo.it",
         "password_hash": pwd_context.hash("demo123"),
         "latitude": 41.8894, "longitude": 12.4726, "neighborhood": "Roma, Lazio",
-        "regione": "Lazio", "provincia": "Roma", "paese": "Italia", "citta": "Roma",
+        "regione": "Lazio", "provincia": "Roma",
         "location_updated_at": None, "created_at": datetime.now(timezone.utc).isoformat(), "avatar": None
     }
     seller2_id = str(uuid.uuid4())
@@ -1164,7 +1181,7 @@ async def seed_data():
         "id": seller2_id, "name": "Giulia Bianchi", "email": "giulia@demo.it",
         "password_hash": pwd_context.hash("demo123"),
         "latitude": 45.4642, "longitude": 9.1900, "neighborhood": "Milano, Lombardia",
-        "regione": "Lombardia", "provincia": "Milano", "paese": "Italia", "citta": "Milano",
+        "regione": "Lombardia", "provincia": "Milano",
         "location_updated_at": None, "created_at": datetime.now(timezone.utc).isoformat(), "avatar": None
     }
     await db.users.insert_many([seller, seller2])
@@ -1511,15 +1528,15 @@ async def complete_valuation(valuation_id: str, estimated_value: float, operator
         "La tua Valutazione è Pronta!",
         f"<p>Ciao {valuation['user_name']},</p>"
         f"<p>La valutazione del tuo oggetto è stata completata.</p>"
-        f"<p><strong>Valore stimato: €{estimated_value}</strong></p>"
-        f"<p>Note dell'esperto: {operator_notes}</p>"
-        f"<p>Accedi all'app per vedere i dettagli completi.</p>"
+        f"<p><b>Valore stimato: €{estimated_value:.2f}</b></p>"
+        f"<p>Note: {operator_notes}</p>"
+        f"<p>Apri l'app per vedere i dettagli completi.</p>"
     )
     
-    return {"message": "Valutazione completata e utente notificato"}
+    return {"message": "Valutazione completata"}
 
 @api_router.get("/admin/valuations")
-async def get_all_valuations(user=Depends(get_current_user)):
+async def get_admin_valuations(user=Depends(get_current_user)):
     """Get all valuations (admin only)"""
     if user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Accesso non autorizzato")
@@ -1530,17 +1547,45 @@ async def get_all_valuations(user=Depends(get_current_user)):
     ).sort("created_at", -1).to_list(100)
     return valuations
 
-# --- CORS and App Setup ---
+app.include_router(api_router)
+
+# --- Serve Admin Panel ---
+@app.get("/api/admin-panel", response_class=HTMLResponse)
+async def serve_admin_panel():
+    admin_html_path = ROOT_DIR / "admin_panel.html"
+    with open(admin_html_path, "r") as f:
+        return HTMLResponse(content=f.read())
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
     allow_credentials=True,
+    allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-app.include_router(api_router)
-
 @app.on_event("startup")
 async def startup():
+    await db.users.create_index("email", unique=True)
+    await db.users.create_index("id", unique=True)
+    await db.listings.create_index("id", unique=True)
+    await db.listings.create_index("category")
+    await db.listings.create_index("seller_id")
+    await db.listings.create_index("status")
+    await db.transactions.create_index("id", unique=True)
+    await db.chats.create_index("id", unique=True)
+    await db.payment_transactions.create_index("id", unique=True)
+    await db.payment_transactions.create_index("session_id", unique=True)
+    await db.reports.create_index("id", unique=True)
+    await db.reports.create_index("status")
+    await db.ratings.create_index("id", unique=True)
+    await db.ratings.create_index("rated_id")
+    await db.ratings.create_index("transaction_id")
+    await db.valuations.create_index("id", unique=True)
+    await db.valuations.create_index("user_id")
+    await db.valuations.create_index("status")
     logger.info("Second Chance Market API avviata con Stripe")
+
+@app.on_event("shutdown")
+async def shutdown_db_client():
+    client.close()
